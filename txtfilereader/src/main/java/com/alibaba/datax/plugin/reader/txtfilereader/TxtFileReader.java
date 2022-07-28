@@ -1,14 +1,26 @@
 package com.alibaba.datax.plugin.reader.txtfilereader;
 
+import static com.alibaba.datax.plugin.reader.txtfilereader.Constant.DEFAULT_SLICE_BYTES;
+
 import com.alibaba.datax.common.exception.DataXException;
 import com.alibaba.datax.common.plugin.RecordSender;
 import com.alibaba.datax.common.spi.Reader;
 import com.alibaba.datax.common.util.Configuration;
 import com.alibaba.datax.plugin.unstructuredstorage.reader.UnstructuredStorageReaderErrorCode;
 import com.alibaba.datax.plugin.unstructuredstorage.reader.UnstructuredStorageReaderUtil;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Objects;
+import java.util.Scanner;
 import org.apache.commons.io.Charsets;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -46,11 +58,14 @@ public class TxtFileReader extends Reader {
 
 		private Map<String, Boolean> isRegexPath;
 
+		private Map<String, Long> fileSerialNumberMap;
+
 		@Override
 		public void init() {
 			this.originConfig = this.getPluginJobConf();
 			this.pattern = new HashMap<String, Pattern>();
 			this.isRegexPath = new HashMap<String, Boolean>();
+			this.fileSerialNumberMap = new HashMap<>();
 			this.validateParameter();
 		}
 
@@ -194,9 +209,9 @@ public class TxtFileReader extends Reader {
 						".?");
 				Pattern patt = Pattern.compile(regexString);
 				this.pattern.put(eachPath, patt);
-				this.sourceFiles = this.buildSourceTargets();
 			}
 
+			this.sourceFiles = this.buildSourceTargets();
 			LOG.info(String.format("您即将读取的文件数为: [%s]", this.sourceFiles.size()));
 		}
 
@@ -229,6 +244,16 @@ public class TxtFileReader extends Reader {
 			for (List<String> files : splitedSourceFiles) {
 				Configuration splitedConfig = this.originConfig.clone();
 				splitedConfig.set(Constant.SOURCE_FILES, files);
+
+				//add split_id column
+				if(fileSerialNumberMap.containsKey(files.get(0))) {
+					List<Configuration> columnList =
+							splitedConfig.getListConfiguration(
+									com.alibaba.datax.plugin.unstructuredstorage.reader.Key.COLUMN);
+					columnList.add(Configuration.from(String.format("{\"type\":\"long\", \"value\": \"%l\"}",
+							fileSerialNumberMap.get(files.get(0)))));
+					splitedConfig.set(com.alibaba.datax.plugin.unstructuredstorage.reader.Key.COLUMN, columnList);
+				}
 				readerSplitConfigs.add(splitedConfig);
 			}
 			LOG.debug("split() ok and end...");
@@ -261,13 +286,13 @@ public class TxtFileReader extends Reader {
 					this.isRegexPath.put(eachPath, false);
 					parentDirectory = eachPath;
 				}
-				this.buildSourceTargetsEathPath(eachPath, parentDirectory,
+				this.buildSourceTargetsEachPath(eachPath, parentDirectory,
 						toBeReadFiles);
 			}
 			return Arrays.asList(toBeReadFiles.toArray(new String[0]));
 		}
 
-		private void buildSourceTargetsEathPath(String regexPath,
+		private void buildSourceTargetsEachPath(String regexPath,
 				String parentDirectory, Set<String> toBeReadFiles) {
 			// 检测目录是否存在，错误情况更明确
 			try {
@@ -297,7 +322,16 @@ public class TxtFileReader extends Reader {
 			// is a normal file
 			if (!directory.isDirectory()) {
 				if (this.isTargetFile(regexPath, directory.getAbsolutePath())) {
-					toBeReadFiles.add(parentDirectory);
+					long sliceBytes = DEFAULT_SLICE_BYTES;
+					if(Objects.nonNull(this.originConfig.getLong(Key.SLICE_BYTES))) {
+						sliceBytes = this.originConfig.getLong(Key.SLICE_BYTES);
+					}
+					if(directory.length() > sliceBytes) {
+						toBeReadFiles.addAll(splitLargeFile(parentDirectory, sliceBytes));
+					} else {
+						toBeReadFiles.add(parentDirectory);
+					}
+
 					LOG.info(String.format(
 							"add file [%s] as a candidate to be read.",
 							parentDirectory));
@@ -360,6 +394,49 @@ public class TxtFileReader extends Reader {
 				splitedList.add(sourceList.subList(begin, end));
 			}
 			return splitedList;
+		}
+
+		private List<String> splitLargeFile(String filePath, Long sliceBytes) {
+			try {
+				File file = new File(filePath);
+				long totalBytes = FileUtils.sizeOf(file);
+				if (totalBytes <= sliceBytes) {
+					return Lists.newArrayList(filePath);
+				}
+
+				long totalLineNumbers = Files.lines(Paths.get(filePath)).count();
+				long sliceLineNumbers = totalLineNumbers / (totalBytes / sliceBytes);
+				long serialNumber = 0L;
+				long linCount = 0L;
+				List<String> result = new ArrayList<>();
+
+				String fileName = String.format("%s_%l", filePath, serialNumber);
+				BufferedWriter writer = new BufferedWriter(new FileWriter(fileName));
+				result.add(fileName);
+				fileSerialNumberMap.put(fileName, serialNumber);
+
+				Scanner sc = new Scanner(file);
+				while(sc.hasNext()) {
+					writer.write(sc.next() + System.lineSeparator());
+					linCount++;
+					if(linCount >= sliceLineNumbers) {
+						writer.close();
+						serialNumber ++;
+						fileName = String.format("%s_%l", filePath, serialNumber);
+						result.add(fileName);
+						fileSerialNumberMap.put(fileName, serialNumber);
+						writer = new BufferedWriter(new FileWriter(fileName));
+						linCount = 0;
+					}
+				}
+				sc.close();
+				writer.close();
+				return result;
+			} catch (IOException e) {
+				String message = String.format("切分大文件失败 : [%s]", filePath);
+				LOG.error(message);
+				throw DataXException.asDataXException(TxtFileReaderErrorCode.SPLIT_FILE_EXCEPTION, message, e);
+			}
 		}
 
 	}

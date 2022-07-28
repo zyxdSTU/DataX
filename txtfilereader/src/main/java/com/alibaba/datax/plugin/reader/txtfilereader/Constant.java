@@ -6,4 +6,5 @@ package com.alibaba.datax.plugin.reader.txtfilereader;
 public class Constant {
 	public static final String SOURCE_FILES = "sourceFiles";
 
+	public static final long DEFAULT_SLICE_BYTES = 100 * 1024 * 1024L;
 }

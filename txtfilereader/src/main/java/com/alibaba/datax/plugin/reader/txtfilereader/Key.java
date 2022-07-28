@@ -5,4 +5,9 @@ package com.alibaba.datax.plugin.reader.txtfilereader;
  */
 public class Key {
 	public static final String PATH = "path";
+
+	/**
+	 * 单个文件分片大小
+	 */
+	public static final String SLICE_BYTES = "sliceBytes";
 }
