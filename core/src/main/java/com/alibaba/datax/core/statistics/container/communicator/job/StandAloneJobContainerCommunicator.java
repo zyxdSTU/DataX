@@ -67,6 +67,8 @@ public class StandAloneJobContainerCommunicator extends AbstractContainerCommuni
 
 
     private void invokeHooks(Communication communication) {
+        //传入状态信息
+        communication.setStateCounter();
         HookInvoker invoker = new HookInvoker(CoreConstant.DATAX_HOME + "/hook", getConfiguration(),
                 communication.getCounter());
         invoker.invokeAll();

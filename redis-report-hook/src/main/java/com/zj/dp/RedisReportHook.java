@@ -4,6 +4,7 @@ import static com.zj.dp.constants.Constant.DATAX_CORE_CONTAINER_JOB_ID;
 
 import com.alibaba.datax.common.spi.Hook;
 import com.alibaba.datax.common.util.Configuration;
+import com.alibaba.fastjson.JSON;
 import com.zj.dp.enums.State;
 import com.zj.dp.constants.Constant;
 import java.util.Map;
@@ -28,10 +29,12 @@ public class RedisReportHook implements Hook {
     @Override
     public void invoke(Configuration jobConf, Map<String, Number> msg) {
         System.out.println("redisReportHook");
+        System.out.println(JSON.toJSON(msg));
         StringBuilder stringBuilder = new StringBuilder();
         String jobId = jobConf.getString(DATAX_CORE_CONTAINER_JOB_ID);
         Double percentage = msg.get(Constant.PERCENTAGE).doubleValue();
         Long totalReadRecords = msg.get(Constant.TOTAL_READ_RECORDS).longValue();
+
         String state = State.map.get(msg.get(Constant.STATE).intValue()).name();
 
         stringBuilder.append("jobId: ")

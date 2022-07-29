@@ -278,7 +278,7 @@ public class Communication extends BaseObject implements Cloneable {
     			|| this.state == State.KILLED;
     }
 
-    private void setStateCounter() {
+    public void setStateCounter() {
         this.setLongCounter(CommunicationTool.STATE, getState().value());
     }
     
