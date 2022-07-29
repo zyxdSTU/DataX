@@ -76,6 +76,7 @@ public abstract class AbstractScheduler {
                 LOG.debug(nowJobContainerCommunication.toString());
 
                 //汇报周期
+                //todo 周期打印进度信息
                 long now = System.currentTimeMillis();
                 if (now - lastReportTimeStamp > jobReportIntervalInMillSec) {
                     Communication reportCommunication = CommunicationTool

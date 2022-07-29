@@ -18,6 +18,8 @@ public final class CommunicationTool {
     public static final String RECORD_SPEED = "recordSpeed";
     public static final String PERCENTAGE = "percentage";
 
+    public static final String STATE = "state";
+
     public static final String READ_SUCCEED_RECORDS = "readSucceedRecords";
     public static final String READ_SUCCEED_BYTES = "readSucceedBytes";
 
@@ -147,6 +149,9 @@ public final class CommunicationTool {
                 sb.append(PerfTrace.unitTime(communication.getLongCounter(CommunicationTool.TRANSFORMER_USED_TIME)));
                 sb.append(" | ");
             }
+            sb.append("State ");
+            sb.append(getState(communication));
+            sb.append(" | ");
             sb.append("Percentage ");
             sb.append(getPercentage(communication));
             return sb.toString();
@@ -172,6 +177,10 @@ public final class CommunicationTool {
 
         private static String getPercentage(final Communication communication) {
             return df.format(communication.getDoubleCounter(PERCENTAGE) * 100) + "%";
+        }
+
+        private static String getState(final Communication communication) {
+            return communication.getState().name();
         }
     }
 
