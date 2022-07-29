@@ -1,6 +1,7 @@
 package com.alibaba.datax.plugin.reader.txtfilereader;
 
 import static com.alibaba.datax.plugin.reader.txtfilereader.Constant.DEFAULT_SLICE_BYTES;
+import static com.alibaba.datax.plugin.reader.txtfilereader.Constant.SPLIT_FILE_THREAD_NUMBERS;
 
 import com.alibaba.datax.common.exception.DataXException;
 import com.alibaba.datax.common.plugin.RecordSender;
@@ -10,36 +11,38 @@ import com.alibaba.datax.plugin.unstructuredstorage.reader.UnstructuredStorageRe
 import com.alibaba.datax.plugin.unstructuredstorage.reader.UnstructuredStorageReaderUtil;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.Objects;
-import java.util.Scanner;
-import org.apache.commons.io.Charsets;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.UnsupportedCharsetException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
+import org.apache.commons.io.Charsets;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.LineIterator;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Created by haiwei.luo on 14-9-20.
@@ -241,6 +244,11 @@ public class TxtFileReader extends Reader {
 
 			List<List<String>> splitedSourceFiles = this.splitSourceFiles(
 					this.sourceFiles, splitNumber);
+
+			for(String key : fileSerialNumberMap.keySet()) {
+				LOG.debug(String.format("zy_key: %s value %d", key, fileSerialNumberMap.get(key)));
+			}
+
 			for (List<String> files : splitedSourceFiles) {
 				Configuration splitedConfig = this.originConfig.clone();
 				splitedConfig.set(Constant.SOURCE_FILES, files);
@@ -250,9 +258,10 @@ public class TxtFileReader extends Reader {
 					List<Configuration> columnList =
 							splitedConfig.getListConfiguration(
 									com.alibaba.datax.plugin.unstructuredstorage.reader.Key.COLUMN);
-					columnList.add(Configuration.from(String.format("{\"type\":\"long\", \"value\": \"%l\"}",
+					columnList.add(Configuration.from(String.format("{\"type\":\"long\", \"value\": \"%d\"}",
 							fileSerialNumberMap.get(files.get(0)))));
 					splitedConfig.set(com.alibaba.datax.plugin.unstructuredstorage.reader.Key.COLUMN, columnList);
+					LOG.debug(String.format("zy_splitedConfig: %s", splitedConfig.toJSON()));
 				}
 				readerSplitConfigs.add(splitedConfig);
 			}
@@ -322,12 +331,9 @@ public class TxtFileReader extends Reader {
 			// is a normal file
 			if (!directory.isDirectory()) {
 				if (this.isTargetFile(regexPath, directory.getAbsolutePath())) {
-					long sliceBytes = DEFAULT_SLICE_BYTES;
-					if(Objects.nonNull(this.originConfig.getLong(Key.SLICE_BYTES))) {
-						sliceBytes = this.originConfig.getLong(Key.SLICE_BYTES);
-					}
-					if(directory.length() > sliceBytes) {
-						toBeReadFiles.addAll(splitLargeFile(parentDirectory, sliceBytes));
+					long fileBytes = FileUtils.sizeOf(directory);
+					if(isLargeFile(fileBytes)) {
+						toBeReadFiles.addAll(splitLargeFile(parentDirectory, fileBytes));
 					} else {
 						toBeReadFiles.add(parentDirectory);
 					}
@@ -380,6 +386,22 @@ public class TxtFileReader extends Reader {
 
 		}
 
+		private boolean isLargeFile(long targetFileBytes) {
+			if(targetFileBytes > getSliceBytes()) {
+				return true;
+			} else {
+				return false;
+			}
+		}
+
+		private long getSliceBytes() {
+			long result = DEFAULT_SLICE_BYTES;
+			if(Objects.nonNull(this.originConfig.getLong(Key.SLICE_BYTES))) {
+				result = this.originConfig.getLong(Key.SLICE_BYTES);
+			}
+			return result;
+		}
+
 		private <T> List<List<T>> splitSourceFiles(final List<T> sourceList,
 				int adviceNumber) {
 			List<List<T>> splitedList = new ArrayList<List<T>>();
@@ -396,49 +418,58 @@ public class TxtFileReader extends Reader {
 			return splitedList;
 		}
 
-		private List<String> splitLargeFile(String filePath, Long sliceBytes) {
+		private List<String> splitLargeFile(String filePath, long totalBytes) {
 			try {
-				File file = new File(filePath);
-				long totalBytes = FileUtils.sizeOf(file);
-				if (totalBytes <= sliceBytes) {
-					return Lists.newArrayList(filePath);
-				}
-
+				long sliceBytes = getSliceBytes();
 				long totalLineNumbers = Files.lines(Paths.get(filePath)).count();
 				long sliceLineNumbers = totalLineNumbers / (totalBytes / sliceBytes);
-				long serialNumber = 0L;
-				long linCount = 0L;
+				long serialNumber = 1L;
 				List<String> result = new ArrayList<>();
 
-				String fileName = String.format("%s_%l", filePath, serialNumber);
-				BufferedWriter writer = new BufferedWriter(new FileWriter(fileName));
-				result.add(fileName);
-				fileSerialNumberMap.put(fileName, serialNumber);
-
-				Scanner sc = new Scanner(file);
-				while(sc.hasNext()) {
-					writer.write(sc.next() + System.lineSeparator());
-					linCount++;
-					if(linCount >= sliceLineNumbers) {
-						writer.close();
+				LineIterator iterator = FileUtils.lineIterator(new File(filePath));
+				ExecutorService threadPool = getThreadPoolExecutor();
+				ArrayList<String> lineList = new ArrayList<>();
+				List<CompletableFuture<Void>> completableFutureList = new ArrayList<>();
+				while(iterator.hasNext()) {
+					lineList.add(iterator.nextLine());
+					if(lineList.size() == sliceLineNumbers) {
+						String splitFileName = String.format("%s_%d", filePath, serialNumber);
+						result.add(splitFileName);
+						fileSerialNumberMap.put(splitFileName, serialNumber);
+						List<String> lineListCopy = Lists.newArrayList(lineList);
+						lineList.clear();
+						lineList.clear();
+						completableFutureList.add(CompletableFuture.runAsync(()-> writeToFile(lineListCopy, splitFileName)
+								, threadPool));
 						serialNumber ++;
-						fileName = String.format("%s_%l", filePath, serialNumber);
-						result.add(fileName);
-						fileSerialNumberMap.put(fileName, serialNumber);
-						writer = new BufferedWriter(new FileWriter(fileName));
-						linCount = 0;
 					}
 				}
-				sc.close();
-				writer.close();
+				CompletableFuture.allOf(completableFutureList.toArray(new CompletableFuture[0])).get();
 				return result;
-			} catch (IOException e) {
+			} catch (IOException | InterruptedException | ExecutionException exception) {
 				String message = String.format("切分大文件失败 : [%s]", filePath);
 				LOG.error(message);
-				throw DataXException.asDataXException(TxtFileReaderErrorCode.SPLIT_FILE_EXCEPTION, message, e);
+				throw DataXException.asDataXException(TxtFileReaderErrorCode.SPLIT_FILE_EXCEPTION, message, exception);
 			}
 		}
 
+		private ExecutorService getThreadPoolExecutor() {
+			return Executors.newFixedThreadPool(SPLIT_FILE_THREAD_NUMBERS);
+		}
+
+		private void writeToFile(List<String> lineList, String fileName) {
+			try {
+				BufferedWriter writer = new BufferedWriter(new FileWriter(fileName));
+				for (String lineString : lineList) {
+					writer.write(lineString + System.lineSeparator());
+				}
+				writer.close();
+			} catch (IOException exception) {
+				String message = String.format("写入文件失败 : [%s]", fileName);
+				LOG.error(message);
+				throw DataXException.asDataXException(TxtFileReaderErrorCode.SPLIT_FILE_EXCEPTION, message, exception);
+			}
+		}
 	}
 
 	public static class Task extends Reader.Task {

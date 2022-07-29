@@ -1,6 +1,7 @@
 package com.alibaba.datax.core.statistics.container.communicator.job;
 
 import com.alibaba.datax.common.util.Configuration;
+import com.alibaba.datax.core.container.util.HookInvoker;
 import com.alibaba.datax.core.statistics.communication.Communication;
 import com.alibaba.datax.core.statistics.communication.CommunicationTool;
 import com.alibaba.datax.core.statistics.container.collector.ProcessInnerCollector;
@@ -47,6 +48,9 @@ public class StandAloneJobContainerCommunicator extends AbstractContainerCommuni
     public void report(Communication communication) {
         super.getReporter().reportJobCommunication(super.getJobId(), communication);
 
+        //todo report
+        invokeHooks(communication);
+
         LOG.info(CommunicationTool.Stringify.getSnapshot(communication));
         reportVmInfo();
     }
@@ -59,5 +63,12 @@ public class StandAloneJobContainerCommunicator extends AbstractContainerCommuni
     @Override
     public Map<Integer, Communication> getCommunicationMap() {
         return super.getCollector().getTGCommunicationMap();
+    }
+
+
+    private void invokeHooks(Communication communication) {
+        HookInvoker invoker = new HookInvoker(CoreConstant.DATAX_HOME + "/hook", getConfiguration(),
+                communication.getCounter());
+        invoker.invokeAll();
     }
 }

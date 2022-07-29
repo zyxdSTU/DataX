@@ -9,6 +9,7 @@ import com.alibaba.datax.core.util.ErrorRecordChecker;
 import com.alibaba.datax.core.util.FrameworkErrorCode;
 import com.alibaba.datax.core.util.container.CoreConstant;
 import com.alibaba.datax.dataxservice.face.domain.enums.State;
+import com.alibaba.fastjson.JSON;
 import org.apache.commons.lang.Validate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,12 +76,17 @@ public abstract class AbstractScheduler {
                 nowJobContainerCommunication.setTimestamp(System.currentTimeMillis());
                 LOG.debug(nowJobContainerCommunication.toString());
 
+
                 //汇报周期
+                //todo 周期打印进度信息
                 long now = System.currentTimeMillis();
                 if (now - lastReportTimeStamp > jobReportIntervalInMillSec) {
+                    System.out.println(String.format("abstract scheduler zy1: %s",
+                            JSON.toJSONString(nowJobContainerCommunication)));
                     Communication reportCommunication = CommunicationTool
                             .getReportCommunication(nowJobContainerCommunication, lastJobContainerCommunication, totalTasks);
-
+                    System.out.println(String.format("abstract scheduler zy2: %s",
+                            JSON.toJSONString(reportCommunication)));
                     this.containerCommunicator.report(reportCommunication);
                     lastReportTimeStamp = now;
                     lastJobContainerCommunication = nowJobContainerCommunication;

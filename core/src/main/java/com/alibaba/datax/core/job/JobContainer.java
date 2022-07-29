@@ -124,7 +124,7 @@ public class JobContainer extends AbstractContainer {
                 this.postHandle();
                 LOG.info("DataX jobId [{}] completed successfully.", this.jobId);
 
-                this.invokeHooks();
+//                this.invokeHooks();
             }
         } catch (Throwable e) {
             LOG.error("Exception when job run", e);
